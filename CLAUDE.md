@@ -193,9 +193,36 @@ Alexandre applique dans `dash.cloudflare.com → Workers & Pages → luxyra-rout
 - [x] **Lockdown `salons`** : drop des 3 policies SELECT `USING true` (anon, authenticated, public). Anon lit maintenant via la vue `salons_public` qui expose uniquement les colonnes publiques (pas `user_id`, `plan`, `sms_credits`, `stripe_customer_id`, `documents_*`, `notes_admin`, etc.). Vue passée en `security_invoker = off` pour bypass RLS proprement. Refactor `site.html`, `inscription.html`, `compte.html` pour utiliser `salons_public`.
 - [x] **Policies INSERT dupliquées nettoyées** : `factures_luxyra` (Service can insert → drop), `salons` (anon_insert_salons → drop, salon_insert suffit)
 
-### 🟠 Reste à faire
+### ✅ Lot 4 — Hardening flow réservation en ligne (session 2026-04-23 fin)
+
+**Failles observées côté client** (avant fix) : 10 attaques sur 11 passaient en anon via INSERT direct sur `rdv_online` :
+- RDV dans le passé ❌ / beyond delai_max ❌ / hors horaires ❌ / dimanche fermé ❌
+- Collab qui ne travaille pas ce jour ❌ / collab inexistant ❌ / service inexistant ❌
+- `acompte_paye=true` sans paiement ❌ / double booking même slot ❌
+
+**Défense en profondeur mise en place :**
+
+1. **FK ajoutées** sur `rdv_online.collaborateur_id → collaborateurs(id)` et `rdv_online.service_id → services(id)` avec `ON DELETE SET NULL`.
+2. **Index UNIQUE partial** `rdv_online_no_double_booking` sur `(salon_id, collaborateur_id, date_rdv, heure_rdv)` WHERE status ∉ ('cancelled','cancelled_by_client','done','completed','refused'). Bloque le double booking au niveau DB (race-safe).
+3. **Trigger `rdv_online_validate()`** `BEFORE INSERT` SECURITY DEFINER qui valide :
+   - Salon existe + status IN ('active','trial')
+   - Service (si fourni) : appartient au salon, actif, book_online=true, show_site=true
+   - Collaborateur (si fourni) : appartient au salon, actif=true
+   - Date + heure respecte `delai_min_heures` et `delai_max_jours` de site_config
+   - Jour ouvré selon horaires du collab (priorité) puis horaires du salon
+   - Heure dans la plage ouverture/fermeture, durée ne dépasse pas la fermeture
+   - Pas d'absence du salon (`fermeture_except`) ni du collab (`conge`/`absent_jour`/`absent`/`maladie`/`formation`) à cette date
+   - `acompte_paye=true` nécessite au moins `stripe_payment_id` ou `stripe_token` (prévient le bypass naïf)
+   - Bypass pour `service_role` (edge functions + admin via API)
+4. **UX côté client** : `site.html` a maintenant une fonction `rdvErrorMessage()` qui traduit les erreurs Postgres/trigger en messages user-friendly. Après échec d'INSERT, `refreshRDV()` est appelé pour re-synchroniser et le calendrier rerender.
+
+**Tests après fix** : 10/10 attaques bloquées avec messages clairs. Le cas légitime (RDV dans les horaires, futur, collab actif) passe bien.
+
+### 🟠 Reste à faire (non bloquant)
 
 - [ ] (long terme) Migrer BP vers Supabase Auth pour avoir reset-password natif + email verif + OAuth
+- [ ] **⚠ CRITIQUE — Stripe test-mode ne charge pas réellement la carte** : dans `site.html` path B (Stripe Connect non activé), le code fait `stripe.createToken()` puis INSERT `rdv_online` avec `acompte_paye=true` MAIS **ne charge jamais la carte côté Stripe** — le token est juste stocké. Le trigger actuel bloque le cas naïf (`acompte_paye=true` sans aucun token) mais pas le cas d'un token fabriqué ou non chargé. Le fix propre : créer une edge function `rdv-charge-acompte` qui appelle l'API Stripe server-side avec la secret key pour vraiment charger la carte, puis INSERT. En attendant, les salons sans Stripe Connect ne perçoivent PAS leurs acomptes même si le RDV est marqué payé.
+- [ ] Extension : appliquer la même logique sur `appointments` (table RDV internes au salon) via un trigger similaire si des salons saisissent des RDV en double par erreur.
 
 ### ✅ HIBP (HaveIBeenPwned) — implémenté côté edge functions
 
@@ -258,6 +285,8 @@ Historique migrations appliquées via MCP Supabase (ordre chronologique) :
 8. `lockdown_storage_salon_documents` (2026-04-23) — bucket docs lockdown tenant-scoped
 9. `salons_public_expand_and_lockdown_v2` (2026-04-23) — expand view + drop 3 SELECT USING true on salons
 10. `cleanup_duplicate_insert_policies` (2026-04-23) — nettoyage doublons factures_luxyra + salons
+11. `rdv_online_hardening_fks_and_unique` (2026-04-23) — FK collab/service + index unique anti double-booking
+12. `rdv_online_validation_trigger` + `rdv_online_validate_security_definer` + `rdv_online_validate_fix_nullcollab` (2026-04-23) — trigger BEFORE INSERT validant salon/service/collab/horaires/absences/délais
 
 Commande utile pour re-auditer :
 ```sql
