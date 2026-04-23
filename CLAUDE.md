@@ -173,8 +173,20 @@ git log --oneline -20
 
 ### 🟠 Reste à faire
 
-- [ ] **Leaked Password Protection** : à activer **manuellement** dans Dashboard Supabase → Auth → Providers → Email → toggle "Leaked password protection". Pas faisable via SQL ni via MCP.
 - [ ] (long terme) Migrer BP vers Supabase Auth pour avoir reset-password natif + email verif + OAuth
+
+### ✅ HIBP (HaveIBeenPwned) — implémenté côté edge functions
+
+La feature Leaked Password Protection de Supabase est **payante (Pro plan $25/mois)**.
+On l'a implémentée **gratuitement nous-mêmes** dans les edge functions :
+
+- `bp-signup` v3 : check HIBP via k-anonymity API (5 premiers chars du SHA-1 seulement envoyés)
+- `bp-profile` v3 (action=change_password) : même check sur le nouveau mdp
+
+Si le mot de passe est dans la base HIBP, l'edge function retourne 400 avec message user-friendly.
+Fail-open : si l'API HIBP est down, on laisse passer le signup (ne bloque pas l'app).
+
+**Cela couvre les clients BeautyPro.** Les salon owners utilisent Supabase Auth natif (inscription.html via sb.auth.signUp) → eux sont protégés uniquement si tu upgrade en Pro.
 
 ### ⚠️ Warnings qui restent dans get_advisors mais légitimes
 
@@ -188,9 +200,9 @@ git log --oneline -20
 
 | Function | verify_jwt | Endpoints |
 |---|---|---|
-| `bp-signup` | false | POST { email, password, nom, prenom, ... } → { user, session_token } |
-| `bp-login` | false | POST { email, password } → { user, session_token } |
-| `bp-profile` | false | POST { session_token, action, ... } où action ∈ get\|update\|change_password\|delete\|remove_payment\|toggle_notif |
+| `bp-signup` v3 | false | POST { email, password, ... } → { user, session_token } + **check HIBP** |
+| `bp-login` v2 | false | POST { email, password } → { user, session_token } |
+| `bp-profile` v3 | false | POST { session_token, action, ... } — action=change_password **check HIBP** |
 | `send-push` | false | (existant) |
 | `bot-reply` | true | (existant) |
 
