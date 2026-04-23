@@ -221,7 +221,8 @@ Alexandre applique dans `dash.cloudflare.com → Workers & Pages → luxyra-rout
 ### 🟠 Reste à faire (non bloquant)
 
 - [ ] (long terme) Migrer BP vers Supabase Auth pour avoir reset-password natif + email verif + OAuth
-- [ ] **⚠ CRITIQUE — Stripe test-mode ne charge pas réellement la carte** : dans `site.html` path B (Stripe Connect non activé), le code fait `stripe.createToken()` puis INSERT `rdv_online` avec `acompte_paye=true` MAIS **ne charge jamais la carte côté Stripe** — le token est juste stocké. Le trigger actuel bloque le cas naïf (`acompte_paye=true` sans aucun token) mais pas le cas d'un token fabriqué ou non chargé. Le fix propre : créer une edge function `rdv-charge-acompte` qui appelle l'API Stripe server-side avec la secret key pour vraiment charger la carte, puis INSERT. En attendant, les salons sans Stripe Connect ne perçoivent PAS leurs acomptes même si le RDV est marqué payé.
+- [x] **Stripe test-mode** : edge function `rdv-charge-acompte` déployée. Elle charge réellement la carte via Stripe Charges API côté serveur (secret key), puis insère `rdv_online` avec `acompte_paye=true` via service_role (bypass trigger). Refund auto si INSERT échoue (ex. double booking). Anti-tampering : vérifie que `amount_eur` correspond au tarif service × acompte% configuré.
+  - **⚠ À FAIRE PAR ALEXANDRE** : configurer le secret `STRIPE_SECRET_KEY` dans Supabase Dashboard → Edge Functions → Settings → Secrets. Valeur : la clé `sk_test_...` (ou `sk_live_...` en prod) qui correspond à la clé publique `pk_test_51TCS0K...` dans site.html line 206.
 - [ ] Extension : appliquer la même logique sur `appointments` (table RDV internes au salon) via un trigger similaire si des salons saisissent des RDV en double par erreur.
 
 ### ✅ HIBP (HaveIBeenPwned) — implémenté côté edge functions
@@ -252,6 +253,7 @@ Fail-open : si l'API HIBP est down, on laisse passer le signup (ne bloque pas l'
 | `bp-signup` v3 | false | POST { email, password, ... } → { user, session_token } + **check HIBP** |
 | `bp-login` v2 | false | POST { email, password } → { user, session_token } |
 | `bp-profile` v3 | false | POST { session_token, action, ... } — action=change_password **check HIBP** |
+| `rdv-charge-acompte` v1 | false | POST { salon_id, stripe_token, amount_eur, rdv_data } → charge Stripe + insert rdv. Requires `STRIPE_SECRET_KEY` env. |
 | `send-push` | false | (existant) |
 | `bot-reply` | true | (existant) |
 
