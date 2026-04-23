@@ -164,14 +164,25 @@ git log --oneline -20
   - RLS `clients_beautypro` verrouillée : SELECT/UPDATE authenticated + trigger bloquant `password_hash`/`email`/`stripe_*` hors service_role
   - **Failles fermées** : plus moyen pour anon de dump les password_hashes ou modifier quoi que ce soit
 
-### 🟠 Reste à faire (non bloquant)
+### ✅ Fait (session 2026-04-23 suite)
 
-- [ ] `salons` : 3 SELECT policies `USING true` (anon, authenticated, public) → à restreindre ou passer via vue `salons_public` (déjà existante)
-- [ ] Storage bucket `salon-documents` : retirer les broad SELECT (`public_read_docs`, `Allow salon document read`)
-- [ ] Supabase Auth : activer "Leaked password protection" dans Dashboard → Auth → Providers → Email
-- [ ] 11 fonctions Postgres sans `search_path` fixé (WARN) — ajouter `SET search_path = public, pg_temp`
-- [ ] `factures_luxyra` : 2 policies INSERT identiques `WITH CHECK true` (nettoyer doublons)
+- [x] **11 fonctions Postgres** : `SET search_path = public, pg_temp` sur `is_admin`, `trg_notif_rdv_online`, `notify_salon`, `expire_cartes_abo`, `fn_push_admin_reply`, `fn_touch_support_conv`, `notify_admins`, `trg_push_support_msg`, `escalate_to_human`, `trg_push_inscription`, `fn_trigger_bot_reply`
+- [x] **Bucket `salon-documents`** : lockdown complet. Plus de listing public. SELECT/INSERT uniquement pour le salon owner sur sa sous-arborescence `documents/{salon_id}/*` ou admin. Les URLs publiques (`getPublicUrl()`) marchent toujours — c'est le bucket qui est public au niveau storage.buckets, pas les policies.
+- [x] **Lockdown `salons`** : drop des 3 policies SELECT `USING true` (anon, authenticated, public). Anon lit maintenant via la vue `salons_public` qui expose uniquement les colonnes publiques (pas `user_id`, `plan`, `sms_credits`, `stripe_customer_id`, `documents_*`, `notes_admin`, etc.). Vue passée en `security_invoker = off` pour bypass RLS proprement. Refactor `site.html`, `inscription.html`, `compte.html` pour utiliser `salons_public`.
+- [x] **Policies INSERT dupliquées nettoyées** : `factures_luxyra` (Service can insert → drop), `salons` (anon_insert_salons → drop, salon_insert suffit)
+
+### 🟠 Reste à faire
+
+- [ ] **Leaked Password Protection** : à activer **manuellement** dans Dashboard Supabase → Auth → Providers → Email → toggle "Leaked password protection". Pas faisable via SQL ni via MCP.
 - [ ] (long terme) Migrer BP vers Supabase Auth pour avoir reset-password natif + email verif + OAuth
+
+### ⚠️ Warnings qui restent dans get_advisors mais légitimes
+
+- **`salons_public` SECURITY DEFINER (ERROR)** : **INTENTIONNEL**. La vue ne sert que des colonnes publiques et filtre aux salons `status IN ('active','trial')`. C'est le bon pattern pour une vue publique anon-safe.
+- **WARNINGS USING/WITH CHECK true sur INSERT publics** : tous légitimes — formulaires de signup ou booking où l'utilisateur n'est pas encore authentifié (`avis_salon`, `client_salon`, `clients_online`, `commandes_online`, `demandes_essai`, `inscriptions_log`, `rdv_online`, `salon_operateurs`, `salons.salon_insert`).
+- **`clients_beautypro.bp_auth_update` USING true** : les champs sensibles (password_hash, email, stripe_*) sont bloqués par le trigger `bp_protect_sensitive`. Les champs non-sensibles (nom, prenom, telephone) peuvent être syncés par n'importe quel salon (pour la cohérence cross-salon) — acceptable.
+- **`rdv_online.anon_update_rdv_online`** : permet au client public de modifier son RDV (annulation, demande de modification) — nécessaire pour la UX booking online.
+- **`produits_prix_historique`, `factures_luxyra`** : INSERT via trigger SECURITY DEFINER ou service_role, donc la permissivité apparente est compensée.
 
 ### 📦 Edge Functions déployées
 
@@ -209,6 +220,10 @@ Historique migrations appliquées via MCP Supabase (ordre chronologique) :
 4. `rls_lot2_hotfix_rdv_online` (2026-04-23) — restaurer anon UPDATE/DELETE rdv_online
 5. `rls_lot2_hotfix_client_salon_anon_insert` (2026-04-23) — restaurer anon INSERT client_salon
 6. `rls_lot3_lock_clients_beautypro_v2` (2026-04-23) — lockdown BP + trigger protection champs sensibles
+7. `fix_function_search_path_v2` (2026-04-23) — search_path fixé sur 11 fonctions
+8. `lockdown_storage_salon_documents` (2026-04-23) — bucket docs lockdown tenant-scoped
+9. `salons_public_expand_and_lockdown_v2` (2026-04-23) — expand view + drop 3 SELECT USING true on salons
+10. `cleanup_duplicate_insert_policies` (2026-04-23) — nettoyage doublons factures_luxyra + salons
 
 Commande utile pour re-auditer :
 ```sql
