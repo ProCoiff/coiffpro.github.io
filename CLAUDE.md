@@ -597,3 +597,48 @@ WHERE schemaname='public'
 - Champ texte adresse + bouton "Re-géocoder via BAN" pour recalculer auto si l'adresse change
 - À l'inscription d'un nouveau salon (`inscription.html`) : géocodage automatique via BAN dès la saisie de l'adresse
 - Optionnel : trigger Postgres `BEFORE UPDATE` qui re-géocode si `adresse/cp/ville` changent (via pg_net + BAN)
+
+### Session 2026-04-27 (suite 7) — Phase D : géocodage automatique salon (commercialisation)
+**Objectif** : zéro intervention salon pour la localisation. Il s'inscrit, sa position apparaît automatiquement sur la carte de recherche.
+
+**Phase D-1** : géocodage auto à l'inscription (`inscription.html`)
+- Fonction `geocodeBANSafe(adresse, cp, ville)` : appelle BAN api.adresse.data.gouv.fr (gratuit, public, sans clé). Timeout 5s, fallback gracieux si BAN down → salon créé sans coords (rattrapable plus tard via Paramètres).
+- Au submit final (étape contrat signé), le frontend géocode AVANT l'INSERT salon. lat/lng/geocoded_at sont enregistrés directement.
+- Test live confirmé : "1 rue de la Paix 75002 Paris" → lat 48.868546, lng 2.33031, score 0.96.
+
+**Phase D-2** : UI ajustement marker dans Paramètres (`app.html` rSettings)
+- Nouvelle section "📍 Votre emplacement sur la carte" sous "RDV sur mesure"
+- Mini-map Leaflet **lazy-loaded** (CSS+JS chargés à la demande, pas de coût initial sur les autres pages de l'app)
+- Tiles OSM France (labels FR) — pas de clé API
+- Marker **draggable** : drag end → save lat/lng en DB direct
+- Click sur la carte = pose le marker à cet endroit (pour les salons sans coords)
+- Bouton "🔄 Recalculer depuis mon adresse" qui re-appelle BAN
+- Status visuel : détecte/enregistre/erreur, score précision affiché en %
+- Coords affichées (debug visuel) en bas
+- Auto-géocodage si pas de coords initiales lors du premier accès aux Paramètres
+- Si pas d'adresse renseignée OU BAN down : vue France, instructions pour cliquer la carte
+
+**Helper réutilisé** : `geocodeBANSafe` est dupliquée dans inscription.html ET app.html (15 lignes chacune). Pas de fichier util.js partagé pour rester simple — à factoriser plus tard si la fonction grossit.
+
+**Cache-busting** : `v=20260427-03`
+
+**Pour Excellence Coiffure** (déjà géocodé au centre de la rue) : Alexandre/sa femme peut maintenant aller dans Paramètres → "📍 Votre emplacement sur la carte" et glisser le marker du côté correct de la rue Nationale. Le drag end sauvegarde immédiatement.
+
+### Session 2026-04-27 — Récap final commits poussés ce soir
+1. `381d11d` — feat(booking): multi-prestations chaînées
+2. `0ab01f7` — feat(rdv-sur-mesure): demande libre + proposition + paiement
+3. `d536f4e` + `6c7c27d` — fix(proposal): échappement apostrophes JS
+4. `d897d22` — chore(rebrand) Phase 1 : alias window.LX + view clients_luxyra
+5. `5b25cdf` — chore(rebrand) Phase 2A : 30 call-sites BP→LX dans HTML
+6. `5d37595` — chore(rebrand) Phase 2B : bp-client.js → lx-* edge functions
+7. `c030047` — docs(rebrand): trace Phase 2
+8. `fa22979` — feat(home): inversion home → marketplace cliente, pitch pro déplacé sur /pro
+9. `62a75ce` — fix(home): retirer filtre status superflu sur salons_public
+10. `e2701c5` — docs: trace inversion home + extraction pro
+11. `562109e` — feat(search): page /recherche avec carte Leaflet + filtres + redirection
+12. `9d22647` — docs: Phase B marketplace + carte Leaflet
+13. `ca70596` — fix(search): logo entier + carte FR (OSM France) + filter sombre
+14. `a0f43e7` — docs: hotfixes UX recherche + Phase D
+15. `0925626` — feat(geo): géocodage auto inscription + UI ajustement marker dans Paramètres
+
+Total : 15 commits, ~3000 lignes de code, 5 nouvelles features majeures, 2 hotfixes, doc complète.
