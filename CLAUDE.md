@@ -426,3 +426,24 @@ WHERE schemaname='public'
 - Pas de modification de proposition par la cliente (juste accepter/refuser)
 
 **Cache-busting** : `v=20260427-02`
+
+### Session 2026-04-27 (suite 2) — Phase 1 rebrand BeautyPro → Luxyra (cosmétique safe)
+**Pourquoi** : le nom "BeautyPro" traîne dans le code (table `clients_beautypro`, edge functions `bp-*`, helper `bp-client.js`, `window.BP.*`) — c'est un legacy interne, l'utilisateur final voit toujours "Compte Luxyra" dans les UI. Alexandre veut nettoyer.
+
+**Approche safe en 2 phases** (zéro casse pour les sessions actives, zéro impact production) :
+
+#### Phase 1 — fait dans cette session
+- DB : `CREATE VIEW clients_luxyra AS SELECT * FROM clients_beautypro` avec `security_invoker=on` (la RLS de la table source s'applique). La table physique n'est PAS touchée. FK / triggers / policies de la table inchangés.
+- JS : ajout de `window.LX = window.BP` à la fin de `bp-client.js`. Ce sont les mêmes fonctions (pas une copie) : sessions, tokens, localStorage continuent de marcher exactement comme avant.
+- Tout nouveau code peut utiliser `LX.signup()` et `clients_luxyra` sans risque.
+
+#### Phase 2 — à faire dans une future session dédiée
+- Migrer les call-sites JS : remplacer `BP.*` → `LX.*` dans `site.html`, `app.html`, `compte.html`, `marketplace.html` (search-replace ciblé + tests Chrome bout-à-bout)
+- Renommer la table physique : `ALTER TABLE clients_beautypro RENAME TO clients_luxyra` + drop de la vue alias (la table prend sa place). Risque modéré : à faire avec rollback préparé.
+- Renommer les 3 edge functions : déployer `lx-signup`, `lx-login`, `lx-profile` (copies), migrer le code client puis supprimer les `bp-*`. Garder un délai de 24-48h entre les deux pour que les sessions JWT en cours expirent.
+- Drop des références `BP` (alias JS) une fois toutes les migrations confirmées.
+
+**Aucune action utilisateur requise** pour la Phase 1. Les sessions BP continuent de marcher tel quel. La phase 2 sera planifiée plus tard.
+
+**Migrations DB de cette phase** :
+- `create_clients_luxyra_view_alias` — vue lecture/écriture qui pointe vers `clients_beautypro`
