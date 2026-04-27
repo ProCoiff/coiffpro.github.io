@@ -373,3 +373,56 @@ WHERE schemaname='public'
 - Optionnel : trigger Postgres qui copie auto rdv_online → appointments avec phases dérivées (pour intégration cabine totale)
 - Optionnel : multi-collab chainé (la coloriste fait la couleur, le coiffeur fait la coupe)
 - Optionnel : suggestions de combos populaires côté client ("Les clients ont souvent ajouté…")
+
+### Session 2026-04-27 (suite) — RDV sur mesure (Planity-killer #2)
+**Objectif** : pour les prestations qui ne peuvent pas être proposées en booking auto (combo soin pendant shampoing, demandes complexes), permettre à la cliente d'envoyer une demande libre que le salon traite à la main, puis envoyer une proposition payable d'un clic. Déclenche un workflow asynchrone qui débloque tous les cas où la femme d'Alexandre devait gérer manuellement sur LS Coiffure.
+
+**Architecture** : nouvelle table `rdv_demandes` totalement séparée de `rdv_online`. Pas de touche au flow booking actuel. Quand cliente paie l'acompte, on crée un `rdv_online` final (réutilise le trigger v3 multi-items existant).
+
+**Migrations DB** :
+- `create_rdv_demandes_table` : table avec status (pending → proposed → confirmed/refused/expired/cancelled_by_salon), proposed_data JSONB, proposal_token unique, FK rdv_online_id, RLS verrouillée (anon INSERT only en pending, salon SELECT/UPDATE par auth.uid()), flag `site_config.accept_rdv_sur_mesure boolean default false`
+- `trg_notif_rdv_demande` : trigger AFTER INSERT/UPDATE qui crée des notifs salon (pattern de trg_notif_rdv_online)
+- `fix_sync_client_to_salon_genre_column` : correction d'un bug pré-existant qui cassait l'INSERT rdv_online avec client_beautypro_id (référence colonne `genre` qui avait été renommée `sexe`). Ajouté EXCEPTION handler fail-soft.
+
+**Edge functions déployées** :
+- `rdv-demande-create` v1 (verify_jwt: false, auth via session_token Luxyra) : POST { session_token, salon_id, demande_text, dispo_text } → INSERT en pending. Anti-spam 5 demandes pending/24h. Vérifie accept_rdv_sur_mesure activé.
+- `rdv-demande-propose` v1 (verify_jwt: true, auth via JWT salon owner) : POST { demande_id, proposed_data } → UPDATE rdv_demandes status='proposed' + génère proposal_token (32 hex) + expires_at +72h → return proposal_url
+- `rdv-demande-proposal-action` v3 (verify_jwt: false, auth par token) : POST { token, action: get|confirm|refuse } → expose la proposition par token, gère refus, gère paiement Stripe Charges API (Path B compte Luxyra) puis crée le rdv_online final.
+
+**Front site.html (cliente)** :
+- Bouton "✨ Demander un RDV sur mesure" sur step 1 booking si SITE_CFG.acceptRdvSurMesure
+- Modal avec form (texte demande + dispos), gate auth Luxyra, hook post-login (rouvre modal si interrompu)
+- Submit → fetch rdv-demande-create → confirmation "sous 24-48h"
+
+**Front app.html (salon)** :
+- Cartouche home "✨ X demandes sur mesure" si pending > 0
+- Notif type `rdv_demande_new` avec bouton "Voir la demande"
+- Modal détail avec composer (date/heure, multi-services à cocher, collab, %acompte, message libre)
+- Auto-calcul durée totale + prix total + acompte
+- Submit → fetch rdv-demande-propose → envoi email Brevo via /api/email/custom (Cloudflare worker) avec récap + lien proposal.html
+- Bouton "Annuler la proposition" (status → cancelled_by_salon)
+- Toggle dans Paramètres → Site → "Activer les RDV sur mesure" (default OFF)
+- Realtime listener sur table rdv_demandes + polling 60s
+
+**Nouvelle page** :
+- `proposal.html` : standalone, lit le token depuis ?t=, affiche récap (salon + RDV + prestations + acompte + message), 2 actions principales (payer & confirmer / refuser). Stripe Elements intégré pour la saisie carte. Path B : débit sur compte Luxyra via Charges API (V1.5 = Connect).
+
+**Email Brevo** : template HTML noir+or signature Luxyra, récap RDV + items + total + acompte, gros bouton "Voir et accepter cette proposition".
+
+**Tests e2e validés via SQL/pg_net** :
+1. ✅ INSERT anon en pending OK ; tentative status='confirmed' ou proposed_data direct = rejetées par RLS
+2. ✅ Trigger notif crée bien "✨ Demande de RDV sur mesure" + "❌ Proposition refusée"
+3. ✅ proposal-action GET (200) avec salon+demande+items
+4. ✅ proposal-action REFUSE (200) → status='refused', refuse_reason stocké, notif refus créée
+5. ✅ proposal-action CONFIRM sans acompte (200) → rdv_online créé via service_role bypass + items[] + status='confirmed' + rdv_demandes lié via rdv_online_id
+6. ✅ Sécurité : propose sans JWT → 401, GET avec faux token → 404
+7. ⚠️ CONFIRM avec acompte > 0 et token Stripe : non testé en DB (nécessite vrai navigateur + Stripe Elements). À tester par Alexandre avec sa carte test.
+
+**Limites V1 documentées** :
+- Stripe Connect non géré (V1.5) : tous les paiements vont sur compte Luxyra (Path B). À reverser manuellement aux salons.
+- Pas d'envoi SMS rappel (V1.5)
+- Photo d'inspiration cliente : champ DB existe (`photo_url`) mais upload UI à faire (V1.5)
+- Pas de relance auto si cliente ne paie pas en 72h (V1.5)
+- Pas de modification de proposition par la cliente (juste accepter/refuser)
+
+**Cache-busting** : `v=20260427-02`
