@@ -478,3 +478,59 @@ WHERE schemaname='public'
 - Pas de migration DB (les noms physiques ne bougent pas en Phase 2)
 
 **Build** : aucune des autres features n'a été touchée. Ce rebrand est strictement additif et cosmétique pour cette phase.
+
+### Session 2026-04-27 (suite 4) — Inversion home + extraction page pro (refonte UX cliente-first)
+**Constat** : la home `index.html` était une page commerciale dédiée aux pros — la marketplace cliente était cachée derrière `/marketplace.html`. Inversion à la Planity, mais avec touche Luxyra (pas de copie).
+
+**Décisions produit** :
+- Pas de comparatif vs concurrents (Alexandre : "on vend Luxyra, on est la nouveauté")
+- Slogan "Réservez votre instant beauté" (court, premium, mémorable)
+- Section "Pourquoi Luxyra" avec atouts uniques (multi-prestations, RDV sur mesure, paiement sécurisé, hébergé en France)
+
+**NOUVEAU `index.html`** (marketplace cliente, ~430 lignes) :
+- Hero noir+or avec slogan + barre de recherche premium glassmorphism (prestation/salon + ville)
+- 5 chips métiers en quick filters
+- Section "Découvrir" : 5 cards métier cliquables (icônes, descriptions courtes)
+- Section "Pourquoi Luxyra" : 4 atouts uniques sans comparatif
+- Section "Salons du moment" : chargement dynamique via `salons_public` (max 6)
+- Bandeau pro en bas → /pro
+- Footer avec liens légaux
+- Recherche redirige vers `marketplace.html?q=&ville=` pour la Phase A. Page `/recherche` dédiée avec carte Mapbox prévue en Phase B.
+
+**NOUVEAU `pro.html`** (ex-index rafraîchi, ~445 lignes) :
+- Title "Luxyra Pro — La solution tout-en-un"
+- Hero "L'élégance au service de votre métier"
+- 2 nouvelles fonctionnalités phares en tête de grille :
+  • Multi-prestations en un seul RDV
+  • RDV sur mesure
+- **Section comparatif vs concurrents SUPPRIMÉE** (volonté Alexandre)
+- Remplacée par "L'engagement Luxyra" : sans commission, France, tout intégré, mis à jour en continu
+- Lien "Espace client" dans la nav vers `/`
+- Reste : tarifs (Essentiel 14,99€ / Pro 24,99€), CTA, formulaire essai, FAQ
+
+**`marketplace.html` inchangé** (rétro-compat). Reçoit les redirections de la barre de recherche en attendant Phase B.
+
+**Bug fixé en cours** : le SELECT `salons_public` avait un `.in('status', ['active','trial'])` superflu qui renvoyait 0 lignes silencieusement (la vue n'expose pas `status`, elle filtre déjà).
+
+**Tests Chrome bout-en-bout (réels en prod)** :
+- `/` charge bien la marketplace cliente
+- 1 salon affiché correctement (Excellence Coiffure, Sarreguemines, lien vers site.html)
+- Search bar fonctionnelle, chips cliquables, redirections OK
+- `/pro` charge bien le pitch pro avec 17 features cards (11 originaux + 2 phares + 4 atouts engagement)
+- Pas de comparatif (vérifié)
+- Multi-prestations + RDV sur mesure visibles
+- Pricing, FAQ, formulaire inscription tous OK
+- 0 erreur console JS
+- Lien "Je suis un pro" dans nav home → /pro ✓
+- Lien "Espace client" dans nav pro → / ✓
+
+**Phase B (à faire dans une future session)** :
+- Page `/recherche?metier=...&ville=...` dédiée avec **carte Mapbox interactive**
+- Géocodage des salons (lat/lng) via Nominatim ou Mapbox Geocoding
+- Filtres avancés (note, distance, ouvert maintenant, métier, prix)
+- URL SEO `/coiffeur/paris-75` pour pages catégorie/ville (avec sitemap)
+
+**Phase C** (encore plus tard) :
+- Autocomplete temps réel dans la search bar (services + noms salons + villes)
+- Booking inline depuis la fiche salon (sans changer de page)
+- Avis clientes + scoring
