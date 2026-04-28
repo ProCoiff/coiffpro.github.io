@@ -21,7 +21,7 @@ Luxyra est un **logiciel SaaS de gestion pour salons de coiffure, barbiers, inst
 - Collaborateurs + opérateurs avec login PIN
 - Multi-tenant : 1 salon = 1 tenant isolé par `salon_id`
 - PWA installable (mobile-first)
-- Marketplace (intégration "BeautyPro" — à confirmer avec Alexandre)
+- Annuaire de salons partenaires (cross-tenant)
 - Crédits SMS
 - Pages légales complètes (CGV, DPA, mentions, confidentialité, suppression de données)
 
@@ -48,7 +48,7 @@ luxyra.fr/
 │   └── sw-admin.js            # Service worker admin
 ├── inscription.html            # Flow signup salons (~528 lignes)
 ├── compte.html                 # Gestion compte utilisateur
-│ # marketplace.html SUPPRIMÉ (28 avr 2026) — remplacé par index.html + recherche.html
+
 ├── reset-password.html         # Reset mot de passe
 ├── clear.html                  # Utilitaire (probablement clear cache)
 ├── preview-email-confirmation.html
@@ -182,7 +182,7 @@ Alexandre applique dans `dash.cloudflare.com → Workers & Pages → luxyra-rout
   - Migration automatique des hashes legacy (SHA-256 salted/unsalted → PBKDF2 au 1er login)
   - `bp-profile` actions supportées : `get`, `update`, `change_password`, `delete`, `remove_payment`, `toggle_notif`
   - Helper client : `bp-client.js` à la racine, window.BP.* API
-  - Refactor `site.html`, `marketplace.html`, `compte.html` pour utiliser `BP.*` à la place des fetch directs
+  - Refactor `site.html`, `compte.html` pour utiliser `BP.*` à la place des fetch directs
   - RLS `clients_beautypro` verrouillée : SELECT/UPDATE authenticated + trigger bloquant `password_hash`/`email`/`stripe_*` hors service_role
   - **Failles fermées** : plus moyen pour anon de dump les password_hashes ou modifier quoi que ce soit
 
@@ -236,7 +236,7 @@ Le choix Path A vs B est fait automatiquement dans `site.html` (ligne ~1347 vs ~
 
 ### 📘 Documentation passage live
 
-Fichier **`docs/PASSAGE_LIVE.md`** à la racine du repo : checklist complet des 3 valeurs à changer (Supabase secret, Cloudflare Worker secret, `pk_` dans site.html/marketplace.html), procédure, gestion Excellence Coiffure et autres salons pending, recommandations webhooks Stripe.
+Fichier **`docs/PASSAGE_LIVE.md`** à la racine du repo : checklist complet des 3 valeurs à changer (Supabase secret, Cloudflare Worker secret, `pk_` dans site.html/proposal.html), procédure, gestion Excellence Coiffure et autres salons pending, recommandations webhooks Stripe.
 - [ ] Extension : appliquer la même logique sur `appointments` (table RDV internes au salon) via un trigger similaire si des salons saisissent des RDV en double par erreur.
 
 ### ✅ HIBP (HaveIBeenPwned) — implémenté côté edge functions
@@ -293,7 +293,7 @@ Fail-open : si l'API HIBP est down, on laisse passer le signup (ne bloque pas l'
 - `BP.hasSession()`, `BP.getUser()`, `BP.getToken()` — helpers
 
 ### À investiguer
-- `marketplace.html` / intégration BeautyPro → système de clients cross-salon (email, password_hash, Stripe) — auth custom à refondre (cf. Lot 3)
+- Intégration BeautyPro → système de clients cross-salon (email, password_hash, Stripe) — auth custom à refondre (cf. Lot 3)
 - Taille de `app.html` (17k lignes monolithe) → éventuel split futur ?
 
 ## Migration SQL réutilisable
@@ -438,7 +438,7 @@ WHERE schemaname='public'
 - Tout nouveau code peut utiliser `LX.signup()` et `clients_luxyra` sans risque.
 
 #### Phase 2 — à faire dans une future session dédiée
-- Migrer les call-sites JS : remplacer `BP.*` → `LX.*` dans `site.html`, `app.html`, `compte.html`, `marketplace.html` (search-replace ciblé + tests Chrome bout-à-bout)
+- Migrer les call-sites JS : remplacer `BP.*` → `LX.*` dans `site.html`, `app.html`, `compte.html` (search-replace ciblé + tests Chrome bout-à-bout)
 - Renommer la table physique : `ALTER TABLE clients_beautypro RENAME TO clients_luxyra` + drop de la vue alias (la table prend sa place). Risque modéré : à faire avec rollback préparé.
 - Renommer les 3 edge functions : déployer `lx-signup`, `lx-login`, `lx-profile` (copies), migrer le code client puis supprimer les `bp-*`. Garder un délai de 24-48h entre les deux pour que les sessions JWT en cours expirent.
 - Drop des références `BP` (alias JS) une fois toutes les migrations confirmées.
@@ -450,7 +450,7 @@ WHERE schemaname='public'
 
 ### Session 2026-04-27 (suite 3) — Phase 2 rebrand BeautyPro → Luxyra (call-sites + edge functions)
 **Phase 2A** — Migration cosmétique des call-sites HTML
-- 30 occurrences `BP.*` migrées vers `LX.*` dans site.html (13), compte.html (14), marketplace.html (2), inscription.html (1)
+- 30 occurrences `BP.*` migrées vers `LX.*` dans site.html (13), compte.html (14), inscription.html (1)
 - Cosmétique pur, l'alias window.LX === window.BP étant déjà en place. Zéro impact fonctionnel.
 - app.html non concerné (utilise Supabase Auth standard).
 
@@ -480,14 +480,14 @@ WHERE schemaname='public'
 **Build** : aucune des autres features n'a été touchée. Ce rebrand est strictement additif et cosmétique pour cette phase.
 
 ### Session 2026-04-27 (suite 4) — Inversion home + extraction page pro (refonte UX cliente-first)
-**Constat** : la home `index.html` était une page commerciale dédiée aux pros — la marketplace cliente était cachée derrière `/marketplace.html`. Inversion à la Planity, mais avec touche Luxyra (pas de copie).
+**Constat** : la home `index.html` était une page commerciale dédiée aux pros — l'annuaire cliente était caché. Inversion à la Planity, mais avec touche Luxyra (pas de copie).
 
 **Décisions produit** :
 - Pas de comparatif vs concurrents (Alexandre : "on vend Luxyra, on est la nouveauté")
 - Slogan "Réservez votre instant beauté" (court, premium, mémorable)
 - Section "Pourquoi Luxyra" avec atouts uniques (multi-prestations, RDV sur mesure, paiement sécurisé, hébergé en France)
 
-**NOUVEAU `index.html`** (marketplace cliente, ~430 lignes) :
+**NOUVEAU `index.html`** (annuaire cliente, ~430 lignes) :
 - Hero noir+or avec slogan + barre de recherche premium glassmorphism (prestation/salon + ville)
 - 5 chips métiers en quick filters
 - Section "Découvrir" : 5 cards métier cliquables (icônes, descriptions courtes)
@@ -495,7 +495,7 @@ WHERE schemaname='public'
 - Section "Salons du moment" : chargement dynamique via `salons_public` (max 6)
 - Bandeau pro en bas → /pro
 - Footer avec liens légaux
-- Recherche redirige vers `marketplace.html?q=&ville=` pour la Phase A. Page `/recherche` dédiée avec carte Mapbox prévue en Phase B.
+- Recherche redirige vers `/recherche?q=&ville=` (Phase B finalisée avec carte Leaflet).
 
 **NOUVEAU `pro.html`** (ex-index rafraîchi, ~445 lignes) :
 - Title "Luxyra Pro — La solution tout-en-un"
@@ -508,12 +508,12 @@ WHERE schemaname='public'
 - Lien "Espace client" dans la nav vers `/`
 - Reste : tarifs (Essentiel 14,99€ / Pro 24,99€), CTA, formulaire essai, FAQ
 
-**`marketplace.html` inchangé** (rétro-compat). Reçoit les redirections de la barre de recherche en attendant Phase B.
+**Page legacy SUPPRIMÉE** (cleanup 28 avr 2026).
 
 **Bug fixé en cours** : le SELECT `salons_public` avait un `.in('status', ['active','trial'])` superflu qui renvoyait 0 lignes silencieusement (la vue n'expose pas `status`, elle filtre déjà).
 
 **Tests Chrome bout-en-bout (réels en prod)** :
-- `/` charge bien la marketplace cliente
+- `/` charge bien l'annuaire cliente
 - 1 salon affiché correctement (Excellence Coiffure, Sarreguemines, lien vers site.html)
 - Search bar fonctionnelle, chips cliquables, redirections OK
 - `/pro` charge bien le pitch pro avec 17 features cards (11 originaux + 2 phares + 4 atouts engagement)
@@ -535,7 +535,7 @@ WHERE schemaname='public'
 - Booking inline depuis la fiche salon (sans changer de page)
 - Avis clientes + scoring
 
-### Session 2026-04-27 (suite 5) — Phase B marketplace : page /recherche avec carte Leaflet
+### Session 2026-04-27 (suite 5) — Phase B annuaire : page /recherche avec carte Leaflet
 **Objectif** : page de résultats dédiée avec carte interactive, filtres, URL params SEO-friendly.
 
 **Migrations DB** :
@@ -559,8 +559,8 @@ WHERE schemaname='public'
 - Fallback message "Aucun salon" engageant
 
 **Mise à jour `index.html`** :
-- `doSearch()` et `quickSearch()` redirigent vers `/recherche.html` au lieu de `/marketplace.html`
-- Marketplace.html reste accessible (rétro-compat)
+- `doSearch()` et `quickSearch()` redirigent vers `/recherche.html`
+- Page legacy reste accessible (rétro-compat)
 
 **Tests Chrome bout-en-bout (réels en prod)** :
 1. ✅ `/recherche.html` charge, carte Leaflet visible, header + filtres présents
@@ -632,11 +632,11 @@ WHERE schemaname='public'
 5. `5b25cdf` — chore(rebrand) Phase 2A : 30 call-sites BP→LX dans HTML
 6. `5d37595` — chore(rebrand) Phase 2B : bp-client.js → lx-* edge functions
 7. `c030047` — docs(rebrand): trace Phase 2
-8. `fa22979` — feat(home): inversion home → marketplace cliente, pitch pro déplacé sur /pro
+8. `fa22979` — feat(home): inversion home → annuaire cliente, pitch pro déplacé sur /pro
 9. `62a75ce` — fix(home): retirer filtre status superflu sur salons_public
 10. `e2701c5` — docs: trace inversion home + extraction pro
 11. `562109e` — feat(search): page /recherche avec carte Leaflet + filtres + redirection
-12. `9d22647` — docs: Phase B marketplace + carte Leaflet
+12. `9d22647` — docs: Phase B annuaire + carte Leaflet
 13. `ca70596` — fix(search): logo entier + carte FR (OSM France) + filter sombre
 14. `a0f43e7` — docs: hotfixes UX recherche + Phase D
 15. `0925626` — feat(geo): géocodage auto inscription + UI ajustement marker dans Paramètres

@@ -6,7 +6,7 @@ Document à lire **avant** de basculer les salons en encaissement réel.
 
 ## 🎯 Intention business (à ne jamais oublier)
 
-**Les acomptes doivent arriver DIRECTEMENT sur le compte Stripe du salon**, pas sur le compte Luxyra. C'est pour ça qu'on passe par **Stripe Connect** (pattern marketplace).
+**Les acomptes doivent arriver DIRECTEMENT sur le compte Stripe du salon**, pas sur le compte Luxyra. C'est pour ça qu'on passe par **Stripe Connect**.
 
 Chaque salon doit :
 1. Aller dans Paramètres → Paiements en ligne → onboarding Stripe Connect
