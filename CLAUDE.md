@@ -70,8 +70,8 @@ luxyra.fr/
 | `forfaits` | Forfaits multi-séances |
 | `packs_clients` | Packs achetés par clients (seances_utilisees, status) |
 | `clients` | Clients du salon |
-| `clients_beautypro` | Clients partagés plateforme BeautyPro (id = email) |
-| `fidelite_client` | Points fidélité (lié à client_beautypro_id + salon_id) |
+| `clients_luxyra` | Clients partagés plateforme Luxyra (legacy: BeautyPro) (id = email) |
+| `fidelite_client` | Points fidélité (lié à client_luxyra_id + salon_id) |
 | `appointments` | Rendez-vous |
 | `rdv_online` | Demandes de RDV via réservation en ligne |
 | `produits` | Catalogue produits (stock) |
@@ -181,9 +181,9 @@ Alexandre applique dans `dash.cloudflare.com → Workers & Pages → luxyra-rout
   - Tokens de session JWT HS256 signés (fallback sur `SUPABASE_SERVICE_ROLE_KEY` comme secret)
   - Migration automatique des hashes legacy (SHA-256 salted/unsalted → PBKDF2 au 1er login)
   - `bp-profile` actions supportées : `get`, `update`, `change_password`, `delete`, `remove_payment`, `toggle_notif`
-  - Helper client : `bp-client.js` à la racine, window.BP.* API
-  - Refactor `site.html`, `compte.html` pour utiliser `BP.*` à la place des fetch directs
-  - RLS `clients_beautypro` verrouillée : SELECT/UPDATE authenticated + trigger bloquant `password_hash`/`email`/`stripe_*` hors service_role
+  - Helper client : `lx-client.js` à la racine, window.LX.* API
+  - Refactor `site.html`, `compte.html` pour utiliser `LX.*` à la place des fetch directs
+  - RLS `clients_luxyra` verrouillée : SELECT/UPDATE authenticated + trigger bloquant `password_hash`/`email`/`stripe_*` hors service_role
   - **Failles fermées** : plus moyen pour anon de dump les password_hashes ou modifier quoi que ce soit
 
 ### ✅ Fait (session 2026-04-23 suite)
@@ -264,7 +264,7 @@ Fail-open : si l'API HIBP est down, on laisse passer le signup (ne bloque pas l'
 
 - **`salons_public` SECURITY DEFINER (ERROR)** : **INTENTIONNEL**. La vue ne sert que des colonnes publiques et filtre aux salons `status IN ('active','trial')`. C'est le bon pattern pour une vue publique anon-safe.
 - **WARNINGS USING/WITH CHECK true sur INSERT publics** : tous légitimes — formulaires de signup ou booking où l'utilisateur n'est pas encore authentifié (`avis_salon`, `client_salon`, `clients_online`, `commandes_online`, `demandes_essai`, `inscriptions_log`, `rdv_online`, `salon_operateurs`, `salons.salon_insert`).
-- **`clients_beautypro.bp_auth_update` USING true** : les champs sensibles (password_hash, email, stripe_*) sont bloqués par le trigger `bp_protect_sensitive`. Les champs non-sensibles (nom, prenom, telephone) peuvent être syncés par n'importe quel salon (pour la cohérence cross-salon) — acceptable.
+- **`clients_luxyra.bp_auth_update` USING true** : les champs sensibles (password_hash, email, stripe_*) sont bloqués par le trigger `bp_protect_sensitive`. Les champs non-sensibles (nom, prenom, telephone) peuvent être syncés par n'importe quel salon (pour la cohérence cross-salon) — acceptable.
 - **`rdv_online.anon_update_rdv_online`** : permet au client public de modifier son RDV (annulation, demande de modification) — nécessaire pour la UX booking online.
 - **`produits_prix_historique`, `factures_luxyra`** : INSERT via trigger SECURITY DEFINER ou service_role, donc la permissivité apparente est compensée.
 
@@ -279,18 +279,18 @@ Fail-open : si l'API HIBP est down, on laisse passer le signup (ne bloque pas l'
 | `send-push` | false | (existant) |
 | `bot-reply` | true | (existant) |
 
-### 📁 bp-client.js API (window.BP)
+### 📁 lx-client.js API (window.LX)
 
-- `BP.signup(fields)` — create account + set session
-- `BP.login(email, password)` — auth + set session
-- `BP.get()` — refresh user profile
-- `BP.update(patch)` — partial profile update
-- `BP.changePassword(old, new)` — password change
-- `BP.delete(password?)` — delete account
-- `BP.removePayment()` — clear Stripe card
-- `BP.toggleNotif(field, value)` — sms_ok/email_ok toggle
-- `BP.logout()` — clear session + user
-- `BP.hasSession()`, `BP.getUser()`, `BP.getToken()` — helpers
+- `LX.signup(fields)` — create account + set session
+- `LX.login(email, password)` — auth + set session
+- `LX.get()` — refresh user profile
+- `LX.update(patch)` — partial profile update
+- `LX.changePassword(old, new)` — password change
+- `LX.delete(password?)` — delete account
+- `LX.removePayment()` — clear Stripe card
+- `LX.toggleNotif(field, value)` — sms_ok/email_ok toggle
+- `LX.logout()` — clear session + user
+- `LX.hasSession()`, `LX.getUser()`, `LX.getToken()` — helpers
 
 ### À investiguer
 - Intégration BeautyPro → système de clients cross-salon (email, password_hash, Stripe) — auth custom à refondre (cf. Lot 3)
@@ -304,7 +304,7 @@ Historique migrations appliquées via MCP Supabase (ordre chronologique) :
 3. `rls_lot2_hotfix_restore_anon_select` (2026-04-23) — hotfix régression (fidelite/cartes_abo/client_salon)
 4. `rls_lot2_hotfix_rdv_online` (2026-04-23) — restaurer anon UPDATE/DELETE rdv_online
 5. `rls_lot2_hotfix_client_salon_anon_insert` (2026-04-23) — restaurer anon INSERT client_salon
-6. `rls_lot3_lock_clients_beautypro_v2` (2026-04-23) — lockdown BP + trigger protection champs sensibles
+6. `rls_lot3_lock_clients_luxyra_v2` (2026-04-23) — lockdown BP + trigger protection champs sensibles
 7. `fix_function_search_path_v2` (2026-04-23) — search_path fixé sur 11 fonctions
 8. `lockdown_storage_salon_documents` (2026-04-23) — bucket docs lockdown tenant-scoped
 9. `salons_public_expand_and_lockdown_v2` (2026-04-23) — expand view + drop 3 SELECT USING true on salons
@@ -382,7 +382,7 @@ WHERE schemaname='public'
 **Migrations DB** :
 - `create_rdv_demandes_table` : table avec status (pending → proposed → confirmed/refused/expired/cancelled_by_salon), proposed_data JSONB, proposal_token unique, FK rdv_online_id, RLS verrouillée (anon INSERT only en pending, salon SELECT/UPDATE par auth.uid()), flag `site_config.accept_rdv_sur_mesure boolean default false`
 - `trg_notif_rdv_demande` : trigger AFTER INSERT/UPDATE qui crée des notifs salon (pattern de trg_notif_rdv_online)
-- `fix_sync_client_to_salon_genre_column` : correction d'un bug pré-existant qui cassait l'INSERT rdv_online avec client_beautypro_id (référence colonne `genre` qui avait été renommée `sexe`). Ajouté EXCEPTION handler fail-soft.
+- `fix_sync_client_to_salon_genre_column` : correction d'un bug pré-existant qui cassait l'INSERT rdv_online avec client_luxyra_id (référence colonne `genre` qui avait été renommée `sexe`). Ajouté EXCEPTION handler fail-soft.
 
 **Edge functions déployées** :
 - `rdv-demande-create` v1 (verify_jwt: false, auth via session_token Luxyra) : POST { session_token, salon_id, demande_text, dispo_text } → INSERT en pending. Anti-spam 5 demandes pending/24h. Vérifie accept_rdv_sur_mesure activé.
@@ -428,36 +428,36 @@ WHERE schemaname='public'
 **Cache-busting** : `v=20260427-02`
 
 ### Session 2026-04-27 (suite 2) — Phase 1 rebrand BeautyPro → Luxyra (cosmétique safe)
-**Pourquoi** : le nom "BeautyPro" traîne dans le code (table `clients_beautypro`, edge functions `bp-*`, helper `bp-client.js`, `window.BP.*`) — c'est un legacy interne, l'utilisateur final voit toujours "Compte Luxyra" dans les UI. Alexandre veut nettoyer.
+**Pourquoi** : le nom "BeautyPro" traîne dans le code (table `clients_luxyra`, edge functions `bp-*`, helper `lx-client.js`, `window.LX.*`) — c'est un legacy interne, l'utilisateur final voit toujours "Compte Luxyra" dans les UI. Alexandre veut nettoyer.
 
 **Approche safe en 2 phases** (zéro casse pour les sessions actives, zéro impact production) :
 
 #### Phase 1 — fait dans cette session
-- DB : `CREATE VIEW clients_luxyra AS SELECT * FROM clients_beautypro` avec `security_invoker=on` (la RLS de la table source s'applique). La table physique n'est PAS touchée. FK / triggers / policies de la table inchangés.
-- JS : ajout de `window.LX = window.BP` à la fin de `bp-client.js`. Ce sont les mêmes fonctions (pas une copie) : sessions, tokens, localStorage continuent de marcher exactement comme avant.
+- DB : `CREATE VIEW clients_luxyra AS SELECT * FROM clients_luxyra` avec `security_invoker=on` (la RLS de la table source s'applique). La table physique n'est PAS touchée. FK / triggers / policies de la table inchangés.
+- JS : ajout de `window.LX = window.LX` à la fin de `lx-client.js`. Ce sont les mêmes fonctions (pas une copie) : sessions, tokens, localStorage continuent de marcher exactement comme avant.
 - Tout nouveau code peut utiliser `LX.signup()` et `clients_luxyra` sans risque.
 
 #### Phase 2 — à faire dans une future session dédiée
-- Migrer les call-sites JS : remplacer `BP.*` → `LX.*` dans `site.html`, `app.html`, `compte.html` (search-replace ciblé + tests Chrome bout-à-bout)
-- Renommer la table physique : `ALTER TABLE clients_beautypro RENAME TO clients_luxyra` + drop de la vue alias (la table prend sa place). Risque modéré : à faire avec rollback préparé.
+- Migrer les call-sites JS : remplacer `LX.*` → `LX.*` dans `site.html`, `app.html`, `compte.html` (search-replace ciblé + tests Chrome bout-à-bout)
+- Renommer la table physique : `ALTER TABLE clients_luxyra RENAME TO clients_luxyra` + drop de la vue alias (la table prend sa place). Risque modéré : à faire avec rollback préparé.
 - Renommer les 3 edge functions : déployer `lx-signup`, `lx-login`, `lx-profile` (copies), migrer le code client puis supprimer les `bp-*`. Garder un délai de 24-48h entre les deux pour que les sessions JWT en cours expirent.
 - Drop des références `BP` (alias JS) une fois toutes les migrations confirmées.
 
 **Aucune action utilisateur requise** pour la Phase 1. Les sessions BP continuent de marcher tel quel. La phase 2 sera planifiée plus tard.
 
 **Migrations DB de cette phase** :
-- `create_clients_luxyra_view_alias` — vue lecture/écriture qui pointe vers `clients_beautypro`
+- `create_clients_luxyra_view_alias` — vue lecture/écriture qui pointe vers `clients_luxyra`
 
 ### Session 2026-04-27 (suite 3) — Phase 2 rebrand BeautyPro → Luxyra (call-sites + edge functions)
 **Phase 2A** — Migration cosmétique des call-sites HTML
-- 30 occurrences `BP.*` migrées vers `LX.*` dans site.html (13), compte.html (14), inscription.html (1)
-- Cosmétique pur, l'alias window.LX === window.BP étant déjà en place. Zéro impact fonctionnel.
+- 30 occurrences `LX.*` migrées vers `LX.*` dans site.html (13), compte.html (14), inscription.html (1)
+- Cosmétique pur, l'alias window.LX === window.LX étant déjà en place. Zéro impact fonctionnel.
 - app.html non concerné (utilise Supabase Auth standard).
 
 **Phase 2B** — Edge functions lx-* en miroir des bp-*
-- Déployé `lx-signup`, `lx-login`, `lx-profile` v1 avec **exactement le même code** que les bp-* et le même `BP_SESSION_SECRET`. Conséquence : les tokens JWT créés par lx-* sont vérifiables par bp-* et inversement.
-- `bp-client.js` modifié : pointe maintenant sur les URLs `lx-*`. Les fonctions internes gardent les noms `bpSignup`, `bpLogin`, etc. (l'API publique window.BP / window.LX est inchangée).
-- Les anciennes `bp-*` restent ACTIVES en parallèle pour rétro-compat (sessions JWT existantes, versions cachées de bp-client.js).
+- Déployé `lx-signup`, `lx-login`, `lx-profile` v1 avec **exactement le même code** que les bp-* et le même `LX_SESSION_SECRET (legacy: BP_SESSION_SECRET accepté)`. Conséquence : les tokens JWT créés par lx-* sont vérifiables par bp-* et inversement.
+- `lx-client.js` modifié : pointe maintenant sur les URLs `lx-*`. Les fonctions internes gardent les noms `bpSignup`, `bpLogin`, etc. (l'API publique window.LX / window.LX est inchangée).
+- Les anciennes `bp-*` restent ACTIVES en parallèle pour rétro-compat (sessions JWT existantes, versions cachées de lx-client.js).
 
 **Tests bout-en-bout Chrome (réels en prod)** :
 1. ✅ Session existante créée par `bp-signup` survit après bascule vers `lx-profile`
@@ -467,11 +467,11 @@ WHERE schemaname='public'
 5. ✅ Migration zéro-downtime, zéro-déconnexion
 
 **Phase 3 — à faire dans une future session dédiée** (non urgent, après vérif que tout marche en prod plusieurs jours)
-- Renommer la table physique : `ALTER TABLE clients_beautypro RENAME TO clients_luxyra` + drop la vue alias actuelle. Penser à la rétro-compat via une vue `clients_beautypro` qui pointe vers la nouvelle table le temps que toutes les références au nom legacy disparaissent.
+- Renommer la table physique : `ALTER TABLE clients_luxyra RENAME TO clients_luxyra` + drop la vue alias actuelle. Penser à la rétro-compat via une vue `clients_luxyra` qui pointe vers la nouvelle table le temps que toutes les références au nom legacy disparaissent.
 - Supprimer les edge functions `bp-signup`, `bp-login`, `bp-profile` (après confirmation que plus rien ne les appelle).
-- Renommer `bp-client.js` → `lx-client.js` + bump cache-busting.
-- Supprimer l'alias `window.BP` (= window.LX seul).
-- Renommer la variable interne `bp_id` dans le JWT payload en `lx_id` (avec migration douce : verifySession accepte les deux pour les sessions en cours).
+- Renommer `lx-client.js` → `lx-client.js` + bump cache-busting.
+- Supprimer l'alias `window.LX` (= window.LX seul).
+- Renommer la variable interne `lx_id` dans le JWT payload en `lx_id` (avec migration douce : verifySession accepte les deux pour les sessions en cours).
 
 **Migrations / déploiements de cette phase** :
 - Edge functions ajoutées : `lx-signup`, `lx-login`, `lx-profile`
@@ -630,7 +630,7 @@ WHERE schemaname='public'
 3. `d536f4e` + `6c7c27d` — fix(proposal): échappement apostrophes JS
 4. `d897d22` — chore(rebrand) Phase 1 : alias window.LX + view clients_luxyra
 5. `5b25cdf` — chore(rebrand) Phase 2A : 30 call-sites BP→LX dans HTML
-6. `5d37595` — chore(rebrand) Phase 2B : bp-client.js → lx-* edge functions
+6. `5d37595` — chore(rebrand) Phase 2B : lx-client.js → lx-* edge functions
 7. `c030047` — docs(rebrand): trace Phase 2
 8. `fa22979` — feat(home): inversion home → annuaire cliente, pitch pro déplacé sur /pro
 9. `62a75ce` — fix(home): retirer filtre status superflu sur salons_public

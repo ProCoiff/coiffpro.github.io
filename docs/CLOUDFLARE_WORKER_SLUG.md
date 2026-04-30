@@ -48,7 +48,7 @@ const RESERVED_PATHS = new Set([
   'sw.js', 'manifest.json', 'manifest-app.json', 'manifest-admin.json',
   'icon-192.png', 'icon-512.png', 'luxyra-logo.png', '.nojekyll',
   'README.md', 'CLAUDE.md',
-  'bp-client.js', 'luxyra-supabase.js', 'supabase.min.js'
+  'lx-client.js', 'luxyra-supabase.js', 'supabase.min.js'
 ]);
 
 const path = url.pathname.replace(/^\/+|\/+$/g, ''); // sans leading/trailing /
