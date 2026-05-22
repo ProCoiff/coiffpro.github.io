@@ -766,3 +766,28 @@ Avant : `lx-signup` créait un compte `clients_luxyra` SANS le relier à la fich
 **Note réseau** : depuis le sandbox Cowork, `api.cloudflare.com` et `api.github.com` sont bloqués (proxy 403). On ne peut donc pas déployer Cloudflare ni lire l'API GitHub Actions directement — mais `git push` sur github.com fonctionne, et l'auto-deploy prend le relais.
 
 **Limite connue restante** : les RDV à venir pris EN SALON (table appointments) n'apparaissaient pas dans le compte en ligne avant le sens A. Maintenant ✅. Les RDV salon y sont en lecture seule (modif/annulation à faire par le salon).
+
+### Session 2026-05-22 (suite) — VRAI bug réservation résolu + planning live + UX inscription
+
+**🔴 CAUSE RACINE des échecs de réservation des clientes (enfin trouvée, reproduite en live) :**
+Le site faisait `sb.from("rdv_online").insert(data).select()`. Le `.select()` = INSERT avec **RETURNING** → PostgREST doit **relire la ligne insérée**. Or la policy RLS de lecture (`salon_rdv_select`) n'autorise que le propriétaire du salon (`auth.uid()`), PAS le rôle `anon`. Une cliente sur le site = `anon` → la relecture échoue → `new row violates row-level security policy for table "rdv_online"`.
+- L'INSERT seul (with_check=true) passe ; c'est la **relecture** qui cassait.
+- Marchait pour Alexandre car il testait connecté à son compte propriétaire (rôle `authenticated`, autorisé à lire). Les clientes = `anon`.
+- ⚠️⚠️ **NE JAMAIS remettre `.select()` (ni `return=representation`) sur un INSERT fait en rôle `anon`** sur rdv_online (ou toute table sans policy SELECT anon). Sinon le bug revient.
+
+**FIX appliqué (site.html)** : id de la réservation **généré côté navigateur** (`_lxNewId()` = crypto.randomUUID) + suppression du `.select()` sur les 2 inserts (submitBooking + submitWithStripe). Plus de RETURNING → plus de relecture → anon peut réserver. Vérifié en live (réservation anon en navigation privée → OK).
+
+**Méthode de debug (pour la prochaine fois)** : tester l'insert en **rôle anon réel** : `DO $$ BEGIN SET LOCAL role anon; INSERT ... RETURNING id INTO x; ... END $$;`. Tester en service_role (le défaut du MCP) **bypasse la RLS** et masque le bug.
+
+**Monitoring** : les échecs de réservation sont maintenant loggés dans `server_errors` via `lx-error-report` (helper `_resaFail` dans site.html, appelé sur échec d'insert + échec paiement). Avant, un échec de résa ne laissait AUCUNE trace (le monitoring ne capte que les erreurs JS/serveur, pas les rejets applicatifs).
+
+**Trigger durci** : `auto_link_client_salon` est passé en **SECURITY DEFINER** (migration `harden_auto_link_client_salon_security_definer`). Avant, il s'exécutait en `anon` et dépendait d'une policy RLS anon sur `client_salon` → fragile au durcissement RLS.
+
+**Planning en direct (app.html)** : le poll des RDV en ligne (toutes les 30s) ajoute désormais les nouveaux RDV à `AP` (`_lxOnlineToAP(rdv)`) + appelle `refreshCurrentView()` → le RDV en ligne apparaît sur le planning sans recharger (≤30s). NB : `loadSalonData` (luxyra-supabase.js) fusionne déjà rdv_online pending/confirmed dans AP au chargement complet.
+
+**UX inscription (compte.html)** : options du `<select>` genre lisibles sur fond sombre (`.fg select option{background:#1a1a2e;color:#f5f0e8}`) + `showErr` fait un `scrollIntoView` (le message d'erreur HIBP "mot de passe exposé" était hors écran). Bouton "Voir mon compte" ajouté sur la page de confirmation de résa.
+
+**Notes :**
+- `last_login` (clients_luxyra) n'est rempli QUE par `lx-login` (connexion explicite). L'inscription (`lx-signup`) auto-connecte SANS le remplir → NULL pour les comptes qui n'ont jamais re-loggé. Normal.
+- Genre vide sur certains comptes : l'inscription rapide du site (`showAuthModal`) ne demande pas le genre ; seul `/compte` le demande. Genre optionnel.
+- Réseau sandbox Cowork : `api.cloudflare.com` ET `api.github.com` bloqués (proxy 403). Déploiement Worker = via push GitHub → workflow `deploy-worker.yml` (auto). Lecture API GitHub Actions impossible depuis le sandbox → vérifier l'onglet Actions manuellement.
